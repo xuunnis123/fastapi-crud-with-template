@@ -1,5 +1,5 @@
 # app.py
-from fastapi import FastAPI,Response,Request,Form,Depends
+from fastapi import FastAPI,Response,Request,Form,Depends,BackgroundTasks
 from fastapi.responses import HTMLResponse,RedirectResponse
 from pydantic import BaseModel,Field
 from typing import Optional, Text,List
@@ -8,7 +8,7 @@ from rsa_company_gen import encode_rsa,generate_licensefile
 from fastapi.templating import Jinja2Templates
 import sqlalchemy
 import databases
-
+import starlette.status as status
 DATABASE_URL = "sqlite:///./test.db"
 
 metadata = sqlalchemy.MetaData()
@@ -32,9 +32,9 @@ metadata.create_all(engine)
 app = FastAPI()
 
 
-
+templates = Jinja2Templates(directory="templates")
 codedb = []
-
+all_item=[]
 class CodeIn(BaseModel):
     user: str
     code: Optional[str]=False
@@ -56,6 +56,26 @@ async def connect():
 async def shutdown():
     await database.disconnect()
 
+
+@app.post('/register',response_class=HTMLResponse)
+async def create(request:Request,user:str=Form(...),expired:str=Form(...),mac_address:str=Form(...)):
+    print("creating")
+    print("user:",user)
+    code_arg = expired
+    code_arg+= mac_address
+    encode=encode_rsa(code_arg,mac_address)
+    #code.code=encode
+    query=notes.insert().values(
+        user=user,
+        expired=expired,
+        code=encode,
+        mac_address=mac_address
+    )
+    record_id=await database.execute(query)
+    return RedirectResponse(url='/',status_code=status.HTTP_302_FOUND)
+    #return templates.TemplateResponse('index.html',{'request': request})
+
+'''
 @app.post('/register',response_model=Code)
 async def create(code:CodeIn):
     code_arg = code.expired
@@ -71,19 +91,28 @@ async def create(code:CodeIn):
     record_id=await database.execute(query)
 
     return {**code.dict(),"id":record_id}
+'''
 
-@app.get("/register/", response_model=List[Code])
+@app.get("/create")
+async def create_form(request:Request):
+    print("create")
+    return templates.TemplateResponse('code_form.html',{"request":request,"notes":all_item})
+
+@app.get("/register/")
+async def read_notes(request:Request):
+    print("read")
+    query = notes.select()
+    all_item=await database.fetch_all(query)
+    return templates.TemplateResponse('code_list.html',{"request":request,"notes":all_item})
+'''
+@app.get("/register/", response_class=List[Code])
 async def read_notes():
     query = notes.select()
     return await database.fetch_all(query)
-
+'''
 @app.get('/register/{code_id}',response_model=Code)
 async def get_one(code_id:int):
-    print(code_id)
-    print(notes.c.id==code_id)
     query=notes.select().where(notes.c.id==code_id)
-    #query = "SELECT * FROM notes WHERE ID={}".format(str(code_id))
-    print(query)
     row=await database.fetch_one(query)
     return row
 
@@ -99,9 +128,9 @@ async def update(code_id:int ,r: CodeIn=Depends()):
         code=encode,
         mac_address=r.mac_address
     )
-    print(query)
+  
     record_id= await database.execute(query)
-    print(record_id)
+   
     query=notes.select().where(notes.c.id == record_id)
     user=await database.fetch_one(query)
     return user
@@ -112,8 +141,11 @@ async def delete(code_id:int):
     return await database.execute(query)
 
 @app.get("/")
-def read_root():
-  return {"home": "Home page"}
+async def main(request: Request):
+    print("main")
+    query = notes.select()
+    all_item=await database.fetch_all(query)
+    return templates.TemplateResponse("code_list.html", {"request": request,"all_item":all_item})
 
 @app.get("/code")
 def get_posts():
@@ -194,7 +226,7 @@ def get_legacy_data():
     return Response(content=data, media_type="application/xml")
 
 
-templates = Jinja2Templates(directory="templates")
+
 
 @app.get('/download')
 def form_post(request: Request):
